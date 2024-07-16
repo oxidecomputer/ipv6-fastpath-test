@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <libdlpi.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 const uint8_t SEGMENT_ROUTING_HEADER = 4;
 #define FRAG_SIZE 896
@@ -48,6 +49,13 @@ struct payload_frag {
 typedef struct payload_frag payload_frag_t;
 
 typedef struct udphdr udp_t;
+
+struct pkt_ipv6 {
+	ip6_t 		ip6;
+	udp_t		udp;
+	payload_t	payload;
+};
+typedef struct pkt_ipv6 pkt_ipv6_t;
 
 struct pkt_hbh {
 	ip6_t 		ip6;
@@ -102,6 +110,8 @@ struct pkt_dst {
 };
 typedef struct pkt_dst pkt_dst_t;
 
+void get_params();
+pkt_ipv6_t create_ipv6_pkt();
 pkt_hbh_t create_hbh_pkt();
 pkt_rtr_t create_rtr_pkt();
 pkt_frag0_t create_frag0_pkt(char*, size_t);
@@ -119,7 +129,14 @@ void set_frag(ip6_frag_t *, uint16_t, bool, uint8_t, uint32_t);
 void set_dst(ip6_dest_t *, ip6_opt_pad4_t *, uint8_t);
 payload_frag_t base_frag_payload(char *, size_t);
 
+static char *link = NULL, *src = NULL, *dst = NULL, *dmac = NULL;
+
 int main() {
+	get_params();
+
+	pkt_ipv6_t ipv6 = create_ipv6_pkt();
+	send_pkt(&ipv6, sizeof(pkt_ipv6_t));
+
 	pkt_hbh_t hbh = create_hbh_pkt();
 	send_pkt(&hbh, sizeof(pkt_hbh_t));
 
@@ -143,13 +160,54 @@ int main() {
 	send_pkt(&dst, sizeof(pkt_dst_t));
 }
 
+void get_params() {
+	link = getenv("LINK");
+	if (link == NULL) {
+		printf("must specify LINK environment variable\n");
+		exit(1);
+	}
+
+	src = getenv("SRC");
+	if (src == NULL) {
+		printf("must specify SRC environment variable\n");
+		exit(1);
+	}
+
+	dst = getenv("DST");
+	if (dst == NULL) {
+		printf("must specify DST environment variable\n");
+		exit(1);
+	}
+
+	dmac = getenv("DMAC");
+	if (dmac == NULL) {
+		printf("must specify DMAC environment variable\n");
+		exit(1);
+	}
+}
+
 void send_pkt(void *const pkt, size_t size) {
 	dlpi_handle_t h;
-	uint8_t dst[6] = {0x02, 0x08, 0x20, 0x2, 0x96, 0x56};
+	uint8_t dst[6];
 
-	dlpi_open("vnic1", &h, 0);
+	sscanf(dmac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+	    &dst[0], &dst[1], &dst[2], &dst[3], &dst[4], &dst[5]);
+
+	dlpi_open(link, &h, 0);
 	dlpi_bind(h, 0x86dd, NULL);
 	dlpi_send(h, dst, 6, pkt, size, NULL);
+}
+
+pkt_ipv6_t create_ipv6_pkt() {
+	pkt_ipv6_t pkt;
+	memset(&pkt, 0, sizeof(pkt_ipv6_t));
+
+	pkt.ip6 = base_ipv6(sizeof(pkt_ipv6_t) - sizeof(ip6_t), IPPROTO_UDP);
+	pkt.udp = base_udp(sizeof(payload_t));
+	pkt.payload = base_payload("regular");
+	pkt.udp.uh_sum = udp6_checksum(&pkt.ip6, &pkt.udp, pkt.payload.message, 128);
+
+	return pkt;
 }
 
 pkt_hbh_t create_hbh_pkt() {
@@ -237,8 +295,8 @@ ip6_t base_ipv6(size_t plen, uint8_t proto) {
 	ip6.ip6_plen = htons(plen);
 	ip6.ip6_nxt = proto;
 	ip6.ip6_hlim = 64;
-	inet_pton(AF_INET6, "fd00::1", &ip6.ip6_src);
-	inet_pton(AF_INET6, "fd00::2", &ip6.ip6_dst);
+	inet_pton(AF_INET6, src, &ip6.ip6_src);
+	inet_pton(AF_INET6, dst, &ip6.ip6_dst);
 	return ip6;
 }
 
@@ -286,8 +344,8 @@ void set_srh(ip6_srh_t *ext_srh, uint8_t proto) {
 	ext_srh->ip6srh_last_entry = 1;
 	ext_srh->ip6srh_flags = 0;
 	ext_srh->ip6srh_tag = 0;
-	inet_pton(AF_INET6, "fd00::2", &ext_srh->ip6srh_seg0);
-	inet_pton(AF_INET6, "fd00::2", &ext_srh->ip6srh_seg1);
+	inet_pton(AF_INET6, dst, &ext_srh->ip6srh_seg0);
+	inet_pton(AF_INET6, dst, &ext_srh->ip6srh_seg1);
 }
 
 void set_frag(
@@ -300,7 +358,6 @@ void set_frag(
 	ext_frag->ip6f_reserved = 0;
 	ext_frag->ip6f_offlg = (offset & 0xe0) >> 5 | (offset & 0x1f) << 11;
 	ext_frag->ip6f_offlg |= (uint16_t)more << 8;
-	printf("%x\n", ext_frag->ip6f_offlg);
 	ext_frag->ip6f_ident = htonl(id);
 }
 

@@ -5,14 +5,22 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <sys/errno.h>
+#include <stdlib.h>
 
 extern int errno;
+
 
 int main() {
 	int sk;
 	struct sockaddr_in6 sa, sender;
 	socklen_t sender_len;
 	char msg[4096], sender_s[256];
+
+	char *listen = getenv("LISTEN");
+	if (listen == NULL) {
+		printf("must specify LISTEN environment variable\n");
+		exit(1);
+	}
 
 	memset(&sa, 0, sizeof(struct sockaddr_in6));
 	memset(&sender, 0, sizeof(struct sockaddr_in6));
@@ -21,7 +29,7 @@ int main() {
 	sender_len = sizeof(struct sockaddr_in6);
 	sa.sin6_family = AF_INET6;
 	sa.sin6_port = htons(0x1701);
-	inet_pton(AF_INET6, "fd00::2", &sa.sin6_addr);
+	inet_pton(AF_INET6, listen, &sa.sin6_addr);
 
 	sk = socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
 	if (bind(sk, (struct sockaddr *)&sa, sizeof(struct sockaddr_in6))) {

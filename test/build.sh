@@ -3,5 +3,5 @@
 set -e
 set -x
 
-clang -Wall rx.c -o rx -l socket
-clang -Wall tx.c -o tx -l dlpi
+clang -std=c99 -Wall rx.c -o rx -l socket
+clang -std=c99 -Wall tx.c -o tx -l dlpi
